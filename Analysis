@@ -1,0 +1,101 @@
+#Imports
+!pip install scanpy
+
+import scanpy as sc
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
+
+
+
+
+
+#Data
+from google.colab import drive
+drive.mount('/content/drive')
+
+adata = sc.read_visium('/content/drive/My Drive/Spatial Transcriptomics/DD073R_A1_processed')
+adata.var_names_make_unique()
+
+
+
+
+
+#Exploring Data
+adata
+adata.uns['spatial']['DD73RA1_rep2']['images']['hires'].shape
+adata.obsm['spatial'].shape
+adata.obs
+
+adata.obs['color'] = 'a'           #Dummy value
+plt.rcParams["figure.figsize"] = (8, 8)
+sc.pl.spatial(adata, color = 'color')
+adata.var["mt"] = adata.var_names.str.startswith("MT-")
+sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
+adata.obs
+
+fig, axs = plt.subplots(1, 4, figsize=(15, 4))
+sns.distplot(adata.obs["total_counts"], kde=False, ax=axs[0])
+sns.distplot(adata.obs["total_counts"][adata.obs["total_counts"] < 10000], kde=False, bins=40, ax=axs[1])
+sns.distplot(adata.obs["n_genes_by_counts"], kde=False, bins=60, ax=axs[2])
+sns.distplot(adata.obs["n_genes_by_counts"][adata.obs["n_genes_by_counts"] < 4000], kde=False, bins=60, ax=axs[3])
+plt.show()
+sns.distplot(adata.obs["total_counts"][adata.obs["total_counts"] < 2000], kde=False, bins=40)
+
+sc.pp.filter_cells(adata, min_counts = 1200)
+sc.pp.filter_cells(adata, max_counts=25000) #based on the following QC this should be reduced
+
+sc.pl.violin(adata, ['pct_counts_mt'], jitter=0.4)
+
+adata = adata[adata.obs["pct_counts_mt"] < 20]
+sc.pp.filter_genes(adata, min_cells=5)
+
+plt.rcParams["figure.figsize"] = (8, 8)
+sc.pl.spatial(adata, color = 'color')
+
+
+
+
+
+#Analysis
+sc.pp.normalize_total(adata, inplace=True)
+sc.pp.log1p(adata)
+sc.pp.highly_variable_genes(adata, flavor="seurat", n_top_genes=2000)
+
+
+sc.pp.pca(adata)
+sc.pp.neighbors(adata)
+sc.tl.umap(adata)
+sc.tl.leiden(adata)
+#you can tell something is wrong in this QC becuase counts are biased by location/cluster
+#may want to reduce threshold to remove
+sc.pl.spatial(adata, img_key="hires", color="leiden", size=1.5)
+
+c.tl.rank_genes_groups(adata, 'leiden', method='wilcoxon')
+#convert to dataframe
+results = adata.uns['rank_genes_groups']
+('0', '1', '2', '3', '4')
+
+out = np.array([[0,0,0,0,0]])
+for group in results['names'].dtype.names:
+    out = np.vstack((out, np.vstack((results['names'][group],
+                                     results['scores'][group],
+                                     results['pvals_adj'][group],
+                                     results['logfoldchanges'][group],
+                                     np.array([group] * len(results['names'][group])).astype('object'))).T))
+
+
+markers = pd.DataFrame(out[1:], columns = ['Gene', 'scores', 'pval_adj', 'lfc', 'cluster'])
+markers = markers[(markers.pval_adj < 0.05) & (abs(markers.lfc) > 1)]
+markers
+
+
+plt.rcParams["figure.figsize"] = (8, 8)
+sc.pl.spatial(adata, img_key="hires", color=["total_counts", "n_genes_by_counts"])
+
+plt.rcParams["figure.figsize"] = (4, 4)
+sc.pl.umap(adata, color=["total_counts", "n_genes_by_counts", "leiden"], wspace=0.4)
+
+markers[markers.cluster == '2']
+sc.pl.spatial(adata, img_key="hires", color=["leiden", "S100A2"], size=1.5,)
